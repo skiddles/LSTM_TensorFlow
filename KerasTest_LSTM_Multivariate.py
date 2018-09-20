@@ -50,17 +50,30 @@ for group in groups:
     i += 1
 pyplot.show()
 
+print(values[0:4, :])
 encoder = LabelEncoder()
-values[:, 4] = encoder.fit_transform(values[:,4])
+values[:, 4] = encoder.fit_transform(values[:, 4])
+
 # ensure all data is float
 values = values.astype('float32')
+print(values[0:4, :])
+
 # normalize features
 scaler = MinMaxScaler(feature_range=(0, 1))
 scaled = scaler.fit_transform(values)
+
+
 # frame as supervised learning
 reframed = series_to_supervised(scaled, 1, 1)
+print(type(reframed))
+
+print(tabulate(reframed.head(), reframed.columns.values))
+
+
 # drop columns we don't want to predict
 reframed.drop(reframed.columns[[9, 10, 11, 12, 13, 14, 15]], axis=1, inplace=True)
+print(tabulate(reframed.head(), reframed.columns.values))
+exit()
 # print(tabulate(reframed.head(), reframed.columns.values))
 # print(type(reframed))
 

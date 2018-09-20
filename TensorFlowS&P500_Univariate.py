@@ -27,7 +27,6 @@ def pct_difference(dataset, interval=1):
     return pd.Series(diff)
 
 
-
 # frame a sequence as a supervised learning problem
 def timeseries_to_supervised(data, lag=1):
     df = pd.DataFrame(data)
@@ -81,15 +80,6 @@ def forecast_lstm(model, batch_size, X):
     X = X.reshape(1, 1, len(X))
     yhat = model.predict(X, batch_size=batch_size)
     return yhat[0, 0]
-
-
-# # inverse scaling for a forecasted value
-# def invert_scale(scaler, X, value):
-#     new_row = [x for x in X] + [value]
-#     array = np.array(new_row)
-#     array = array.reshape(1, len(array))
-#     inverted = scaler.inverse_transform(array)
-#     return inverted[0, -1]
 
 
 time_series = pd.read_csv('./data/S&P 500 Historical Data.csv',
