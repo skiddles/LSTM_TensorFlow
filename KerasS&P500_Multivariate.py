@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
-import math
-from sklearn.preprocessing import LabelEncoder
+import re
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from matplotlib import pyplot
@@ -10,10 +9,11 @@ from keras.layers import Dense
 from keras.layers import LSTM
 from tabulate import tabulate
 
-graphs = []
+graphs = [3]
 EPOCHS = 2
-MINIBATCH_SIZE = 16
-VERBOSE = False
+MINIBATCH_SIZE = 64
+VERBOSE = True
+INTERVAL_IN_DAYS = 1
 
 
 # load dataset
@@ -23,36 +23,63 @@ def parser(x):
 
 
 # create a differenced series
-def pct_difference(in_dataset, interval=1):
-    in_dataset = in_dataset.apply(np.log)
-    out_dataset = in_dataset.copy()
+def pct_difference(in_dataset, target_y_col_nm):
+    print(tabulate(in_dataset.sample(3), in_dataset.columns.values))
+    history = in_dataset[[target_y_col_nm]]
+    out_dataset = in_dataset.copy().apply(np.log)
+    print(tabulate(out_dataset.tail(), out_dataset.columns.values))
     out_dataset_columns = out_dataset.columns.values
-    in_dataset = in_dataset.shift(periods=interval, axis=0)
-    out_dataset = pd.merge(out_dataset, in_dataset, left_index=True, right_index=True, suffixes=('', '_lagged'))
-    for column in out_dataset_columns:
-        lagged_column = '_'.join([column, 'lagged'])
-        out_dataset[column] = out_dataset[column] / out_dataset[lagged_column]
-    out_dataset = out_dataset[out_dataset_columns]
-    return out_dataset
+    offset = int(len(out_dataset_columns)/2)
+    for col in range(offset):
+        col_names = [out_dataset_columns[col], out_dataset_columns[col+offset]]
+        is_target = [False, False]
+        for i, col_name in enumerate(col_names):
+            if re.search("\(t\)", col_name):
+                is_target[i] = True
+
+    drop_columns = [col for col in all_columns if re.search("\(t\)", col)]
+    drop_columns.remove(target_y_col_nm)
+
+    out_dataset[target_y_col_nm] = np.log(out_dataset[target_y_col_nm]) / np.log(out_dataset[offset_column_name])
+    out_dataset.drop(columns=drop_columns, inplace=True)
+    if VERBOSE:
+        print("Sample Differenced Data\n====================")
+        print(tabulate(out_dataset.sample(5), out_dataset.columns.values))
+    exit()
+    return out_dataset, history
 
 
 # invert differenced value
-def inverse_difference(history, yhat, interval=1):
-    return history[-interval] * yhat
+def inverse_difference(in_history, in_yhat, interval):
+    print(in_yhat)
+    print('In History Shape: ', in_history.shape)
+    in_yhat = pd.DataFrame(in_yhat)
+    prediction_count = in_yhat.shape[0]
+    in_history = in_history.shift(interval)
+    print('Shifted History Shape: ', in_history.shape)
+    in_history = in_history.iloc[-prediction_count:, :]
+    print('Truncated History Shape: ', in_history.shape)
+    print(in_yhat)
+    print(in_history)
+    results = in_history * in_yhat
+    print(results)
+
+    print(results.iloc[:4, :])
+    print(results.iloc[-4:, :])
+    return results
 
 
 # convert series to supervised learning
 def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
     n_vars = 1 if type(data) is list else data.shape[1]
-    df = pd.DataFrame(data)
     cols, names = list(), list()
     # input sequence (t-n, ... t-1)
     for i in range(n_in, 0, -1):
-        cols.append(df.shift(i))
+        cols.append(data.shift(i))
         names += [('var%d(t-%d)' % (j + 1, i)) for j in range(n_vars)]
     # forecast sequence (t, t+1, ... t+n)
     for i in range(0, n_out):
-        cols.append(df.shift(-i))
+        cols.append(data.shift(-i))
         if i == 0:
             names += [('var%d(t)' % (j + 1)) for j in range(n_vars)]
         else:
@@ -97,26 +124,33 @@ if 1 in graphs:
         i += 1
     pyplot.show()
 
+
 # This section was working
-pct_change_data = pct_difference(mv_time_series, interval=1)
 
-supervised_data = series_to_supervised(pct_change_data, n_in=1, n_out=1, dropnan=True)
-supervised_data.drop(supervised_data.columns[[4, 5, 6]], axis=1, inplace=True)
-if VERBOSE: print(tabulate(supervised_data.head(), supervised_data.columns.values))
-
-# Don't need the encoder because none of the fields are categorical
-scaler = MinMaxScaler(feature_range=(0, 1))
-if VERBOSE: print("supervised_data.shape: %s \nThis is what is sent to the scaler." % str(supervised_data.shape))
-scaled = scaler.fit_transform(supervised_data)
+supervised_data = series_to_supervised(mv_time_series, n_in=1, n_out=INTERVAL_IN_DAYS, dropnan=True)
 if VERBOSE:
-    print(tabulate(scaled[0:4, :], supervised_data.columns.values))
-    print("scaled.shape: ", scaled.shape)
+    print(tabulate(supervised_data.head(), supervised_data.columns.values))
 
-num_values = supervised_data.shape[0]
+pct_change_data, historical_data = pct_difference(supervised_data, r'var4(t)')
+
+print(tabulate(mv_time_series.tail(), mv_time_series.columns.values))
+print(mv_time_series.shape[0])
+print(tabulate(historical_data.tail(), historical_data.columns.values))
+print(historical_data.shape[0])
+exit()
+# Don't need the encoder because none of the fields are categorical
+# scaler = MinMaxScaler(feature_range=(0, 1))
+# if VERBOSE: print("supervised_data.shape: %s \nThis is what is sent to the scaler." % str(pct_change_data.shape))
+# scaled = scaler.fit_transform(pct_change_data)
+# if VERBOSE:
+#     print(tabulate(scaled[0:4, :], pct_change_data.columns.values))
+#     print("scaled.shape: ", scaled.shape)
+
+num_values = pct_change_data.shape[0]
 split_line = int(num_values*0.25)
 
-train = supervised_data.values[:split_line, :]
-test = supervised_data.values[split_line:, :]
+train = pct_change_data.values[:split_line, :]
+test = pct_change_data.values[split_line:, :]
 
 # split into input and outputs
 train_X, train_y = train[:, :-1], train[:, -1]
@@ -166,27 +200,28 @@ print(test_X.shape)
 # invert scaling for forecast
 print("yhat.shape: ", yhat.shape)
 print(test_X[:, :].shape)
+print(test_X[0: 4, :])
+print(test_y[0: 4])
+print(historical_data[0:4])
 
-# inv_yhat = np.concatenate((test_X[:, :-1], yhat), axis=1)
-inv_yhat = np.concatenate((test_X, yhat), axis=1)
-print("inv_yhat.shape: ", inv_yhat.shape)
-inv_yhat = scaler.inverse_transform(inv_yhat)
-inv_yhat = inv_yhat[:, 0]
+inv_yhat = inverse_difference(historical_data, yhat, INTERVAL_IN_DAYS)
+
 # invert scaling for actual
-test_y = test_y.reshape((len(test_y), 1))
-inv_y = np.concatenate((test_X, test_y), axis=1)
-inv_y = scaler.inverse_transform(inv_y)
-inv_y = inv_y[:, -1]
-print(test_X)
+# inv_yhat = inv_yhat.reshape((len(test_y), 1))
+# inv_y = np.concatenate((test_X, test_y), axis=1)
+# inv_y = scaler.inverse_transform(inv_y)
+# inv_y = inv_y[:, -1]
+# print(test_X)
 # calculate RMSE
-rmse = np.sqrt(mean_squared_error(inv_y, inv_yhat))
+rmse = np.sqrt(mean_squared_error(historical_data, inv_yhat))
 print('Test RMSE: %.3f' % rmse)
-length_of_test = inv_y.shape[0]*-1
+exit()
+length_of_test = test_y.shape[0]*-1
 previous_price = mv_time_series['Price'][length_of_test:]
 print(previous_price)
 output = pd.DataFrame(list(zip(mv_time_series.index.values[length_of_test:],
                                previous_price,
-                               previous_price*inv_y,
+                               previous_price*test_y,
                                previous_price*inv_yhat,
                                (previous_price*inv_yhat-inv_y*previous_price)*100/(previous_price*inv_y))),
                       columns=['Date',
