@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import re
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from matplotlib import pyplot
 from keras.models import Sequential
@@ -9,63 +8,70 @@ from keras.layers import Dense
 from keras.layers import LSTM
 from tabulate import tabulate
 
-graphs = [3]
-EPOCHS = 2
-MINIBATCH_SIZE = 64
+graphs = [5]
+EPOCHS = 200
+MINIBATCH_SIZE = 24
 VERBOSE = True
 INTERVAL_IN_DAYS = 1
+TARGET_COL = 'SP500_Close'
 
 
 # load dataset
 def parser(x):
     # "Aug 09, 2018"
-    return pd.datetime.strptime(x, '%b %d, %Y')
+    # format = '%b %d, %Y'
+
+    # 1/1/2000
+    date_format = '%m/%d/%Y'
+    return pd.datetime.strptime(x, date_format)
 
 
 # create a differenced series
-def pct_difference(in_dataset, target_y_col_nm):
-    print(tabulate(in_dataset.sample(3), in_dataset.columns.values))
+def pct_difference(in_dataset, target_y_col_nm, return_target):
+    return_target_col_name = ''
     history = in_dataset[[target_y_col_nm]]
     out_dataset = in_dataset.copy().apply(np.log)
-    print(tabulate(out_dataset.tail(), out_dataset.columns.values))
     out_dataset_columns = out_dataset.columns.values
     offset = int(len(out_dataset_columns)/2)
     for col in range(offset):
         col_names = [out_dataset_columns[col], out_dataset_columns[col+offset]]
-        is_target = [False, False]
+        target_col = None
+        interval_col = None
+        new_col_name = None
         for i, col_name in enumerate(col_names):
-            if re.search("\(t\)", col_name):
-                is_target[i] = True
+            m = re.search("(var[0-9]+\()(t)(\))", col_name)
+            if m is not None:
+                target_col = col_name
+                new_col_name = 'delta'.join([m.group(1), m.group(3)])
+                if target_col == target_y_col_nm:
+                    return_target_col_name = new_col_name
+            else:
+                interval_col = col_name
+        out_dataset[new_col_name] = out_dataset[target_col] / out_dataset[interval_col]
+    drop_columns = in_dataset.columns.values
+    if return_target:
+        drop_columns.remove(target_y_col_nm)
+    else:
+        return_target_col_name = target_y_col_nm
 
-    drop_columns = [col for col in all_columns if re.search("\(t\)", col)]
-    drop_columns.remove(target_y_col_nm)
-
-    out_dataset[target_y_col_nm] = np.log(out_dataset[target_y_col_nm]) / np.log(out_dataset[offset_column_name])
     out_dataset.drop(columns=drop_columns, inplace=True)
     if VERBOSE:
         print("Sample Differenced Data\n====================")
-        print(tabulate(out_dataset.sample(5), out_dataset.columns.values))
-    exit()
-    return out_dataset, history
+        print(tabulate(out_dataset.tail(5), out_dataset.columns.values))
+    return out_dataset, return_target_col_name, history
 
 
 # invert differenced value
 def inverse_difference(in_history, in_yhat, interval):
-    print(in_yhat)
-    print('In History Shape: ', in_history.shape)
-    in_yhat = pd.DataFrame(in_yhat)
-    prediction_count = in_yhat.shape[0]
-    in_history = in_history.shift(interval)
-    print('Shifted History Shape: ', in_history.shape)
-    in_history = in_history.iloc[-prediction_count:, :]
-    print('Truncated History Shape: ', in_history.shape)
-    print(in_yhat)
-    print(in_history)
-    results = in_history * in_yhat
-    print(results)
+    yhat = pd.DataFrame(in_yhat,
+                        columns=in_history.columns.values,
+                        index=in_history.tail(in_yhat.shape[0]).index.values)
 
-    print(results.iloc[:4, :])
-    print(results.iloc[-4:, :])
+    in_history = in_history.tail(in_yhat.shape[0]+interval).copy()
+    prediction_count = yhat.shape[0]
+    in_history = in_history.shift(interval)
+    in_history = in_history.iloc[-prediction_count:, :]
+    results = in_history * yhat
     return results
 
 
@@ -93,26 +99,24 @@ def series_to_supervised(data, n_in=1, n_out=1, dropnan=True):
     return agg
 
 
-mv_time_series = pd.read_csv('./data/S&P 500 Historical Data.csv',
+mv_time_series = pd.read_csv('./data/SP500_VIX_20000101_20180919_3.csv',
                              header=0,
                              parse_dates=[0],
                              index_col=0,
                              squeeze=True,
                              thousands=',',
-                             usecols=[0, 1, 2, 3, 4],
+                             usecols=[0, 1, 2, 3, 4, 6, 10],
                              date_parser=parser)
 
 mv_time_series.sort_index(inplace=True)
 column_names = list(mv_time_series.columns.values)
-target = "Price"
-column_names.pop(0)
-column_names.append(target)
+column_names.remove(TARGET_COL)
+column_names.append(TARGET_COL)
 
 mv_time_series = mv_time_series[column_names]
-
 values = mv_time_series.values
 
-groups = [0, 1, 2, 3]
+groups = [3, 4, 5]
 if 1 in graphs:
     i = 1
     # plot each column
@@ -124,43 +128,59 @@ if 1 in graphs:
         i += 1
     pyplot.show()
 
-
-# This section was working
-
-supervised_data = series_to_supervised(mv_time_series, n_in=1, n_out=INTERVAL_IN_DAYS, dropnan=True)
+supervised_data = series_to_supervised(mv_time_series,
+                                       n_in=1,
+                                       n_out=INTERVAL_IN_DAYS,
+                                       dropnan=True)
 if VERBOSE:
     print(tabulate(supervised_data.head(), supervised_data.columns.values))
 
-pct_change_data, historical_data = pct_difference(supervised_data, r'var4(t)')
+dif_tgt_col_nm = "var%i(t)" % mv_time_series.shape[1]
 
-print(tabulate(mv_time_series.tail(), mv_time_series.columns.values))
-print(mv_time_series.shape[0])
-print(tabulate(historical_data.tail(), historical_data.columns.values))
-print(historical_data.shape[0])
-exit()
-# Don't need the encoder because none of the fields are categorical
-# scaler = MinMaxScaler(feature_range=(0, 1))
-# if VERBOSE: print("supervised_data.shape: %s \nThis is what is sent to the scaler." % str(pct_change_data.shape))
-# scaled = scaler.fit_transform(pct_change_data)
-# if VERBOSE:
-#     print(tabulate(scaled[0:4, :], pct_change_data.columns.values))
-#     print("scaled.shape: ", scaled.shape)
+pct_change_data, target_col_nm, historical_data = pct_difference(supervised_data, dif_tgt_col_nm, return_target=False)
 
-num_values = pct_change_data.shape[0]
+supervised_data2 = series_to_supervised(pct_change_data, n_in=1, n_out=INTERVAL_IN_DAYS, dropnan=True)
+for col in supervised_data2.columns.values:
+    target_day_col_name = re.search('var[0-9]+\(t\)', col)
+    if col != target_col_nm and target_day_col_name:
+        supervised_data2.drop(columns=col, inplace=True)
+
+print(tabulate(supervised_data2.tail(), supervised_data2.columns.values))
+
+groups = [3, 4, 5]
+if 3 in graphs:
+    i = 1
+    # plot each column
+    pyplot.figure()
+    for group in groups:
+        pyplot.subplot(len(groups), 1, i)
+        pyplot.plot(supervised_data2.values[:, group])
+        pyplot.title(supervised_data2.columns[group], y=0.5, loc='right')
+        i += 1
+    pyplot.show()
+
+print(supervised_data2.tail())
+
+time_series_data = supervised_data2
+
+num_values = time_series_data.shape[0]
+
 split_line = int(num_values*0.25)
 
-train = pct_change_data.values[:split_line, :]
-test = pct_change_data.values[split_line:, :]
+train = time_series_data.values[:split_line, :]
+
+test = time_series_data.values[split_line:, :]
 
 # split into input and outputs
 train_X, train_y = train[:, :-1], train[:, -1]
+
 test_X, test_y = test[:, :-1], test[:, -1]
+
 if VERBOSE:
     print("train_X")
     print(train_X[0:5, :])
     print("train_y")
     print(train_y[0:5])
-
 
 # reshape input to be 3D [samples, timesteps, features]
 train_X = train_X.reshape((train_X.shape[0], 1, train_X.shape[1]))
@@ -192,42 +212,48 @@ if 2 in graphs:
     pyplot.show()
 
 # make a prediction
-if VERBOSE: print("test_X.shape: %s sent to predict" % str(test_X.shape))
+if VERBOSE:
+    print("test_X.shape: %s sent to predict" % str(test_X.shape))
+
 yhat = model.predict(test_X)
-if VERBOSE: print("test_X.shape[2]: ", test_X.shape[2])
+
+if VERBOSE:
+    print("test_X.shape[2]: ", test_X.shape[2])
 test_X = test_X.reshape((test_X.shape[0], test_X.shape[2]))
-print(test_X.shape)
-# invert scaling for forecast
-print("yhat.shape: ", yhat.shape)
-print(test_X[:, :].shape)
-print(test_X[0: 4, :])
-print(test_y[0: 4])
-print(historical_data[0:4])
 
 inv_yhat = inverse_difference(historical_data, yhat, INTERVAL_IN_DAYS)
 
-# invert scaling for actual
-# inv_yhat = inv_yhat.reshape((len(test_y), 1))
-# inv_y = np.concatenate((test_X, test_y), axis=1)
-# inv_y = scaler.inverse_transform(inv_y)
-# inv_y = inv_y[:, -1]
-# print(test_X)
-# calculate RMSE
-rmse = np.sqrt(mean_squared_error(historical_data, inv_yhat))
+# final_data = pd.merge(historical_data.tail(inv_yhat.shape[0]),
+#                       inv_yhat,
+#                       left_index=True,
+#                       right_index=True,
+#                       suffixes=('_actual', '_predicted'))
+
+final_data = pd.merge(mv_time_series, inv_yhat, left_index=True, right_index=True)
+
+final_data['Predicted Close'] = final_data[dif_tgt_col_nm]
+final_data.drop(columns = dif_tgt_col_nm, inplace=True)
+final_data['Pct Difference'] = (final_data['Predicted Close'] - final_data[TARGET_COL])*100 / final_data[TARGET_COL]
+rmse = np.sqrt(mean_squared_error(historical_data.tail(inv_yhat.shape[0]), inv_yhat))
 print('Test RMSE: %.3f' % rmse)
-exit()
-length_of_test = test_y.shape[0]*-1
-previous_price = mv_time_series['Price'][length_of_test:]
-print(previous_price)
-output = pd.DataFrame(list(zip(mv_time_series.index.values[length_of_test:],
-                               previous_price,
-                               previous_price*test_y,
-                               previous_price*inv_yhat,
-                               (previous_price*inv_yhat-inv_y*previous_price)*100/(previous_price*inv_y))),
-                      columns=['Date',
-                               'Previous Price',
-                               'Actual',
-                               'Predicted',
-                               'Difference %']).set_index('Date')
-print(tabulate(output.tail(5), output.columns.values))
-print(mv_time_series.tail(1))
+
+# length_of_test = test_y.shape[0]*-1
+# previous_price = mv_time_series['Price'][length_of_test:]
+print(tabulate(final_data.tail(15), final_data.columns.values))
+
+print("Min Diff: %0.3f%s, Mean Diff: %0.3f%s, StdDev Diff: %0.3f%s, Max Diff: %0.3f%s" %
+      (final_data['Pct Difference'].abs().min(), "%",
+       final_data['Pct Difference'].mean(), "%",
+       final_data['Pct Difference'].std(), "%",
+       final_data['Pct Difference'].abs().max(), "%"))
+
+if 4 in graphs:
+    pyplot.plot(final_data[TARGET_COL], label='Actual')
+    pyplot.plot(final_data['Predicted Close'], label='Predicted')
+    pyplot.legend()
+    pyplot.show()
+
+if 5 in graphs:
+    pyplot.plot(final_data['Pct Difference'], label='Percent Difference')
+    pyplot.legend()
+    pyplot.show()
