@@ -11,6 +11,8 @@ from keras.layers import Dense
 from keras.layers import LSTM
 from tabulate import tabulate
 
+from ts_models import MultiVariate
+
 
 graphs = []
 EPOCHS = 20
@@ -230,130 +232,23 @@ history = pd.merge(history, mv_time_series,
 history.index = ts_data_frame.index.values
 history = history[[TARGET_COL]]
 
-groups = [3, 4, 5]
-# if 1 in graphs:
-#     i = 1
-#     # plot each column
-#     pyplot.figure()
-#     for group in groups:
-#         pyplot.subplot(len(groups), 1, i)
-#         pyplot.plot(values[:, group])
-#         pyplot.title(mv_time_series.columns[group], y=0.5, loc='right')
-#         i += 1
-#     pyplot.show()
-
-
-groups = [3, 4, 5]
-# if 3 in graphs:
-#     i = 1
-#     # plot each column
-#     pyplot.figure()
-#     for group in groups:
-#         pyplot.subplot(len(groups), 1, i)
-#         pyplot.plot(supervised_data2.values[:, group])
-#         pyplot.title(supervised_data2.columns[group], y=0.5, loc='right')
-#         i += 1
-#     pyplot.show()
-
 num_values = ts_data_frame.shape[0]
 print(num_values, history.shape[0])
 assert num_values == history.shape[0]
 split_line = int(num_values*TRAIN_PCT)
-
-train = ts_data_frame.values[:split_line, :]
 
 test = ts_data_frame.values[split_line:, :]
 
 historical_data = history.values[split_line:, :]
 
 # split into input and outputs
-train_X, train_y = train[:, 1:], train[:, 0]
-
 test_X, test_y = test[:, 1:], test[:, 0]
 
-if VERBOSE:
-    print("train_X")
-    print(train_X[0:5, :])
-    print("train_y")
-    print(train_y[0:5])
-
 # reshape input to be 3D [samples, timesteps, features]
-train_X = train_X.reshape((train_X.shape[0], 1, train_X.shape[1]))
 test_X = test_X.reshape((test_X.shape[0], 1, test_X.shape[1]))
 
-if VERBOSE:
-    print("train_X.shape:, ", train_X.shape)
-    print("train_y.shape: ", train_y.shape)
+model = MultiVariate.LSTMs.Simple()
+model.load(r'./output/S&P500.JSON')
+model.set_test_data([test_X, test_y])
+model.evaluate_model()
 
-
-# design network
-model = Sequential()
-model.add(LSTM(50, input_shape=(train_X.shape[1], train_X.shape[2])))
-model.add(Dense(1))
-model.compile(loss='mae', optimizer='adam')
-# fit network
-loss_metrics = model.fit(train_X, train_y,
-                         epochs=EPOCHS,
-                         batch_size=MINIBATCH_SIZE,
-                         validation_data=(test_X, test_y),
-                         verbose=2,
-                         shuffle=False)
-
-# plot loss_metrics
-if 2 in graphs:
-    pyplot.plot(loss_metrics.history['loss'], label='train')
-    pyplot.plot(loss_metrics.history['val_loss'], label='test')
-    pyplot.legend()
-    pyplot.show()
-
-# make a prediction
-if VERBOSE:
-    print("test_X.shape: %s sent to predict" % str(test_X.shape))
-
-yhat = model.predict(test_X)
-
-if VERBOSE:
-    print("test_X.shape[2]: ", test_X.shape[2])
-test_X = test_X.reshape((test_X.shape[0], test_X.shape[2]))
-
-
-inv_yhat = pd.Series(inverse_difference(historical_data, yhat, INTERVAL_IN_DAYS).squeeze(axis=1))
-# final_data = pd.merge(historical_data.tail(inv_yhat.shape[0]),
-#                       inv_yhat,
-#                       left_index=True,
-#                       right_index=True,
-#                       suffixes=('_actual', '_predicted'))
-
-ts_test_data = mv_time_series.copy()
-ts_test_data = ts_test_data.tail(inv_yhat.shape[0])
-inv_yhat.index = ts_test_data.index.values
-
-final_data = pd.merge(mv_time_series, pd.DataFrame(inv_yhat, columns=['Predicted Close']), left_index=True, right_index=True)
-# exit()
-# final_data['Predicted Close'] = final_data[dif_tgt_col_nm]
-# final_data.drop(columns = dif_tgt_col_nm, inplace=True)
-final_data['Pct Difference'] = (final_data['Predicted Close'] - final_data[TARGET_COL])*100 / final_data[TARGET_COL]
-rmse = np.sqrt(mean_squared_error(mv_time_series[[TARGET_COL]].tail(inv_yhat.shape[0]).values, inv_yhat))
-print('Test RMSE: %.3f' % rmse)
-
-# length_of_test = test_y.shape[0]*-1
-# previous_price = mv_time_series['Price'][length_of_test:]
-print(tabulate(final_data.tail(15), final_data.columns.values))
-
-print("Min Diff: %0.3f%s, Mean Diff: %0.3f%s, StdDev Diff: %0.3f%s, Max Diff: %0.3f%s" %
-      (final_data['Pct Difference'].min(), "%",
-       final_data['Pct Difference'].mean(), "%",
-       final_data['Pct Difference'].std(), "%",
-       final_data['Pct Difference'].max(), "%"))
-
-if 4 in graphs:
-    pyplot.plot(final_data[TARGET_COL], label='Actual')
-    pyplot.plot(final_data['Predicted Close'], label='Predicted')
-    pyplot.legend()
-    pyplot.show()
-
-if 5 in graphs:
-    pyplot.plot(final_data['Pct Difference'], label='Percent Difference')
-    pyplot.plot(final_data['VIX_Close'], label='VIX')
-    pyplot.legend()
-    pyplot.show()

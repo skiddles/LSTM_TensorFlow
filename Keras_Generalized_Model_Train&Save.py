@@ -11,9 +11,11 @@ from keras.layers import Dense
 from keras.layers import LSTM
 from tabulate import tabulate
 
+from ts_models import MultiVariate
+
 
 graphs = []
-EPOCHS = 20
+EPOCHS = 200
 MINIBATCH_SIZE = 40
 VERBOSE = False
 INTERVAL_IN_DAYS = 60
@@ -285,7 +287,19 @@ if VERBOSE:
     print("train_X.shape:, ", train_X.shape)
     print("train_y.shape: ", train_y.shape)
 
+model = MultiVariate.LSTMs.Simple()
+model.define_model(train_X.shape[1], train_X.shape[2])
+model.set_train_data([train_X, train_y])
+print("Training data is set...")
+model.set_test_data([test_X, test_y])
+print("Testing data is set...")
 
+print("Begin training the network...")
+model.train(epochs=EPOCHS, batch_size=MINIBATCH_SIZE, verbose=2)
+print("Finished training the network...")
+model.predict()
+model.save("./output/S&P500.JSON")
+exit()
 # design network
 model = Sequential()
 model.add(LSTM(50, input_shape=(train_X.shape[1], train_X.shape[2])))
